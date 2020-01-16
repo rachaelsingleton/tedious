@@ -1,42 +1,46 @@
-import WritableTrackingBuffer from './tracking-buffer/writable-tracking-buffer';
-import { writeToTrackingBuffer } from './all-headers';
-import Request from './request';
-import { Parameter, ParameterData } from './data-type';
-import { InternalConnectionOptions } from './connection';
+'use strict';
 
-// const OPTION = {
+var _classCallCheck2 = require('babel-runtime/helpers/classCallCheck');
+
+var _classCallCheck3 = _interopRequireDefault(_classCallCheck2);
+
+var _createClass2 = require('babel-runtime/helpers/createClass');
+
+var _createClass3 = _interopRequireDefault(_createClass2);
+
+function _interopRequireDefault(obj) {
+  return obj && obj.__esModule ? obj : {
+    default: obj
+  };
+}
+
+var WritableTrackingBuffer = require('./tracking-buffer/tracking-buffer').WritableTrackingBuffer;
+
+var writeAllHeaders = require('./all-headers').writeToTrackingBuffer; // const OPTION = {
 //   WITH_RECOMPILE: 0x01,
 //   NO_METADATA: 0x02,
 //   REUSE_METADATA: 0x04
 // };
 
-const STATUS = {
+
+var STATUS = {
   BY_REF_VALUE: 0x01,
   DEFAULT_VALUE: 0x02
 };
-
 /*
   s2.2.6.5
  */
-class RpcRequestPayload {
-  request: Request;
-  procedure: string | number;
 
-  options: InternalConnectionOptions;
-  txnDescriptor: Buffer;
-
-  constructor(request: Request, txnDescriptor: Buffer, options: InternalConnectionOptions) {
+module.exports = function () {
+  function RpcRequestPayload(request, txnDescriptor, options) {
+    (0, _classCallCheck3.default)(this, RpcRequestPayload);
     this.request = request;
-    this.procedure = this.request.sqlTextOrProcedure!;
-    this.options = options;
-    this.txnDescriptor = txnDescriptor;
-  }
+    this.procedure = this.request.sqlTextOrProcedure;
+    var buffer = new WritableTrackingBuffer(500);
 
-  getData(cb: (data: Buffer) => void) {
-    const buffer = new WritableTrackingBuffer(500);
-    if (this.options.tdsVersion >= '7_2') {
-      const outstandingRequestCount = 1;
-      writeToTrackingBuffer(buffer, this.txnDescriptor, outstandingRequestCount);
+    if (options.tdsVersion >= '7_2') {
+      var outstandingRequestCount = 1;
+      writeAllHeaders(buffer, txnDescriptor, outstandingRequestCount);
     }
 
     if (typeof this.procedure === 'string') {
@@ -46,68 +50,62 @@ class RpcRequestPayload {
       buffer.writeUShort(this.procedure);
     }
 
-    const optionFlags = 0;
+    var optionFlags = 0;
     buffer.writeUInt16LE(optionFlags);
+    var parameters = this.request.parameters;
 
-    const parameters = this.request.parameters;
-    const writeNext = (i: number) => {
-      if (i >= parameters.length) {
-        cb(buffer.data);
-        return;
+    for (var i = 0, len = parameters.length; i < len; i++) {
+      var parameter = parameters[i];
+      buffer.writeBVarchar('@' + parameter.name);
+      var statusFlags = 0;
+
+      if (parameter.output) {
+        statusFlags |= STATUS.BY_REF_VALUE;
       }
 
-      this._writeParameterData(parameters[i], buffer, () => {
-        setImmediate(() => {
-          writeNext(i + 1);
-        });
-      });
-    };
-    writeNext(0);
-  }
+      buffer.writeUInt8(statusFlags);
+      var param = {
+        value: parameter.value
+      };
+      var type = parameter.type;
 
-  toString(indent = '') {
-    return indent + ('RPC Request - ' + this.procedure);
-  }
-
-  _writeParameterData(parameter: Parameter, buffer: WritableTrackingBuffer, cb: () => void) {
-    buffer.writeBVarchar('@' + parameter.name);
-
-    let statusFlags = 0;
-    if (parameter.output) {
-      statusFlags |= STATUS.BY_REF_VALUE;
-    }
-    buffer.writeUInt8(statusFlags);
-
-    const param: ParameterData = { value: parameter.value };
-
-    const type = parameter.type;
-
-    if ((type.id & 0x30) === 0x20) {
-      if (parameter.length) {
-        param.length = parameter.length;
-      } else if (type.resolveLength) {
-        param.length = type.resolveLength(parameter);
+      if ((type.id & 0x30) === 0x20) {
+        if (parameter.length) {
+          param.length = parameter.length;
+        } else if (type.resolveLength) {
+          param.length = type.resolveLength(parameter);
+        }
       }
+
+      if (type.hasPrecision) {
+        if (parameter.precision) {
+          param.precision = parameter.precision;
+        } else if (type.resolvePrecision) {
+          param.precision = type.resolvePrecision(parameter);
+        }
+      }
+
+      if (type.hasScale) {
+        if (parameter.scale) {
+          param.scale = parameter.scale;
+        } else if (type.resolveScale) {
+          param.scale = type.resolveScale(parameter);
+        }
+      }
+
+      type.writeTypeInfo(buffer, param, options);
+      type.writeParameterData(buffer, param, options, () => {});
     }
 
-    if (parameter.precision) {
-      param.precision = parameter.precision;
-    } else if (type.resolvePrecision) {
-      param.precision = type.resolvePrecision(parameter);
-    }
-
-    if (parameter.scale) {
-      param.scale = parameter.scale;
-    } else if (type.resolveScale) {
-      param.scale = type.resolveScale(parameter);
-    }
-
-    type.writeTypeInfo(buffer, param, this.options);
-    type.writeParameterData(buffer, param, this.options, () => {
-      cb();
-    });
+    this.data = buffer.data;
   }
-}
 
-export default RpcRequestPayload;
-module.exports = RpcRequestPayload;
+  (0, _createClass3.default)(RpcRequestPayload, [{
+    key: 'toString',
+    value: function toString(indent) {
+      indent || (indent = '');
+      return indent + ('RPC Request - ' + this.procedure);
+    }
+  }]);
+  return RpcRequestPayload;
+}();
